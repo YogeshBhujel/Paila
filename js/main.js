@@ -71,6 +71,7 @@ function wireBookingModal() {
   let lastFocused = null;
 
   wireDestinationToggle(form);
+  wireCalendarTypeToggle(form);
   wireDateAutoSlashes(form);
 
   const open = (e) => {
@@ -128,42 +129,101 @@ function wireDestinationToggle(form) {
   syncDestinationOther(form);
 }
 
+/* AD dates are written dd/mm/yyyy; BS (Bikram Sambat) dates are written
+   yyyy/mm/dd, which is the order Nepali BS dates are conventionally
+   read/written in. */
+function dateFormatFor(calendarType) {
+  return calendarType === "BS" ? "yyyy/mm/dd" : "dd/mm/yyyy";
+}
+
+/* Keep the label hint + input placeholder in sync with the chosen
+   calendar (AD/BS), and clear the date field on switch so a half-typed
+   date in the old format can't be mistaken for the new one. */
+function wireCalendarTypeToggle(form) {
+  const select = form?.elements?.calendartype;
+  const dateField = form?.elements?.bookingdate;
+  if (!select || !dateField) return;
+  const hint = form.querySelector("[data-date-hint]");
+
+  const apply = () => {
+    const format = dateFormatFor(select.value);
+    dateField.placeholder = format;
+    dateField.setAttribute("aria-label", `Booking date (${format})`);
+    if (hint) hint.textContent = `(${format})`;
+  };
+
+  select.addEventListener("change", () => {
+    dateField.value = "";
+    apply();
+  });
+  apply();
+}
+
 /* Auto-insert the slashes as the visitor types the booking date, so a
-   typed "18042026" becomes "18/04/2026" without them doing it by hand. */
+   typed "18042026" becomes "18/04/2026" for AD, or a typed "20820418"
+   becomes "2082/04/18" for BS — grouped to match whichever calendar is
+   currently selected. */
 function wireDateAutoSlashes(form) {
   const dateField = form?.elements?.bookingdate;
+  const calendarSelect = form?.elements?.calendartype;
   if (!dateField) return;
   dateField.addEventListener("input", () => {
     const digits = dateField.value.replace(/\D/g, "").slice(0, 8);
-    if (digits.length > 4) {
-      dateField.value = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-    } else if (digits.length > 2) {
-      dateField.value = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+    const isBS = calendarSelect && calendarSelect.value === "BS";
+
+    if (isBS) {
+      // yyyy/mm/dd
+      if (digits.length > 6) {
+        dateField.value = `${digits.slice(0, 4)}/${digits.slice(4, 6)}/${digits.slice(6)}`;
+      } else if (digits.length > 4) {
+        dateField.value = `${digits.slice(0, 4)}/${digits.slice(4)}`;
+      } else {
+        dateField.value = digits;
+      }
     } else {
-      dateField.value = digits;
+      // dd/mm/yyyy
+      if (digits.length > 4) {
+        dateField.value = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+      } else if (digits.length > 2) {
+        dateField.value = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+      } else {
+        dateField.value = digits;
+      }
     }
   });
 }
 
-/* dd/mm/yyyy shape check. For AD dates we also confirm it's a real
-   calendar date and that it isn't in the past. BS (Bikram Sambat) dates
-   use the same dd/mm/yyyy shape, but we only sanity-check the day/month/
-   year ranges here — turning that into a real BS calendar check needs a
-   Bikram Sambat date-conversion library. */
+/* Shape check matching the calendar-specific format (dd/mm/yyyy for AD,
+   yyyy/mm/dd for BS). For AD dates we also confirm it's a real calendar
+   date and that it isn't in the past. BS (Bikram Sambat) dates get a
+   day/month/year range sanity-check here — turning that into a real BS
+   calendar check needs a Bikram Sambat date-conversion library. */
 function validateBookingDate(value, calendarType) {
-  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  const isBS = calendarType === "BS";
+  const format = dateFormatFor(calendarType);
+  const pattern = isBS ? /^(\d{4})\/(\d{2})\/(\d{2})$/ : /^(\d{2})\/(\d{2})\/(\d{4})$/;
+  const match = pattern.exec(value);
   if (!match) {
-    return { ok: false, error: "Please enter the booking date as dd/mm/yyyy." };
-  }
-  const day = Number(match[1]);
-  const month = Number(match[2]);
-  const year = Number(match[3]);
-
-  if (month < 1 || month > 12 || day < 1 || day > 32 || year < 2000 || year > 2100) {
-    return { ok: false, error: "That doesn't look like a valid date — please use dd/mm/yyyy." };
+    return { ok: false, error: `Please enter the booking date as ${format}.` };
   }
 
-  if (calendarType === "AD") {
+  let day, month, year;
+  if (isBS) {
+    year = Number(match[1]);
+    month = Number(match[2]);
+    day = Number(match[3]);
+  } else {
+    day = Number(match[1]);
+    month = Number(match[2]);
+    year = Number(match[3]);
+  }
+
+  const yearRange = isBS ? { min: 2070, max: 2200 } : { min: 2000, max: 2100 };
+  if (month < 1 || month > 12 || day < 1 || day > 32 || year < yearRange.min || year > yearRange.max) {
+    return { ok: false, error: `That doesn't look like a valid date — please use ${format}.` };
+  }
+
+  if (!isBS) {
     const d = new Date(year, month - 1, day);
     const isRealDate = d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day;
     if (!isRealDate) {
@@ -253,6 +313,7 @@ function wireContactPageForm() {
   if (!form) return;
   const msg = document.getElementById("contact-page-form-msg");
   wireDestinationToggle(form);
+  wireCalendarTypeToggle(form);
   wireDateAutoSlashes(form);
   form.addEventListener("submit", (e) => {
     e.preventDefault();
